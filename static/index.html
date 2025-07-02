@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Learning Dashboard</title>
+  <style>
+    body { font-family: Arial; max-width: 900px; margin: auto; background: #f9f9f9; padding: 20px; }
+    h2 { color: #222; }
+    .module { background: #fff; padding: 15px; margin-bottom: 10px; border-radius: 8px; box-shadow: 0 0 5px #ccc; }
+    .locked { opacity: 0.5; pointer-events: none; }
+    button { padding: 8px 12px; border: none; background: #007bff; color: white; border-radius: 5px; cursor: pointer; }
+    button:disabled { background: #999; }
+    .quiz-question { margin: 10px 0; }
+    .correct { color: green; }
+    .wrong { color: red; }
+    ul { margin: 0; padding-left: 20px; }
+  </style>
+</head>
+<body>
+
+<h2>🧠 Generate Learning Plan</h2>
+<label>Skill: <input id="skill" placeholder="e.g., Python"></label>
+<label>Deadline: <input type="date" id="deadline"></label>
+<button onclick="generatePlan()">Generate Plan</button>
+
+<hr>
+
+<h2>📋 Your Learning Dashboard</h2>
+<div id="dashboard"></div>
+
+<h2>🎓 Final Quiz</h2>
+<button id="finalBtn" onclick="startFinalQuiz()" style="display:none;">Take Final Quiz</button>
+<div id="finalQuizBox"></div>
+<div id="finalResult"></div>
+<h2>🔁 Request Plan Update</h2>
+<p>Not satisfied with the plan? Describe why you'd like a change:</p>
+<textarea id="updateReason" rows="3" cols="60" placeholder="e.g., too fast, need more practice time..."></textarea><br>
+<button onclick="requestPlanUpdate()">Request Updated Plan</button>
+<div id="updatedPlanBox"></div>
+
+<script>
+let userId = "demo-user";
+let planData = [];
+let currentModule = 0;
+let finalQuestions = [];
+
+async function generatePlan() {
+  const skill = document.getElementById('skill').value;
+  const deadline = document.getElementById('deadline').value;
+  const res = await fetch('/api/init', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ skill, deadline })
+  });
+
+  const data = await res.json();
+  planData = data.plan;
+  currentModule = 0;
+  renderDashboard();
+}
+
+function renderDashboard() {
+  const dashboard = document.getElementById("dashboard");
+  dashboard.innerHTML = "";
+
+  planData.forEach((mod, idx) => {
+    const locked = idx > currentModule;
+    const div = document.createElement("div");
+    div.className = "module" + (locked ? " locked" : "");
+    div.innerHTML = `
+      <h3>${mod.title || 'Day ' + (idx+1)}</h3>
+      <b>Topics:</b> ${mod.topics.join(", ")}<br>
+      <b>Resources:</b><ul>
+        ${mod.resources.map(r => `<li>${r.title} (${r.estimated_time})</li>`).join("")}
+      </ul>
+      <button onclick="startQuiz(${idx})" ${locked ? "disabled" : ""}>Take Quiz</button>
+      <div id="quiz-${idx}"></div>
+    `;
+    dashboard.appendChild(div);
+  });
+
+  // Show Final Quiz button if all modules passed
+  if (currentModule >= planData.length) {
+    document.getElementById('finalBtn').style.display = 'inline-block';
+  }
+}
+
+async function startQuiz(moduleIndex) {
+  const topic = planData[moduleIndex].topics[0];
+  const quizDiv = document.getElementById(`quiz-${moduleIndex}`);
+  quizDiv.innerHTML = "⏳ Loading quiz...";
+
+  const res = await fetch('/api/module-quiz?topic=' + encodeURIComponent(topic));
+  const data = await res.json();
+
+  if (data.error) {
+    quizDiv.innerHTML = "❌ " + data.error;
+    return;
+  }
+
+  let html = "<form id='form-" + moduleIndex + "'>";
+  data.questions.forEach((q, i) => {
+    html += `<div class="quiz-question"><b>Q${i+1}: ${q.question}</b><br>`;
+    for (const [key, val] of Object.entries(q.options)) {
+      html += `<label><input type="radio" name="q${i}" value="${key}"> (${key}) ${val}</label><br>`;
+    }
+    html += `</div>`;
+  });
+  html += `<button type="button" onclick="submitQuiz(${moduleIndex}, ${JSON.stringify(data.questions).replace(/"/g, '&quot;')})">Submit Quiz</button></form>`;
+  quizDiv.innerHTML = html;
+}
+
+function submitQuiz(index, questions) {
+  let score = 0;
+  questions.forEach((q, i) => {
+    const selected = document.querySelector(`input[name="q${i}"]:checked`);
+    if (selected && selected.value === q.correct_answer) score++;
+  });
+
+  const quizDiv = document.getElementById(`quiz-${index}`);
+  const total = questions.length;
+  const passed = score >= Math.ceil(0.7 * total);
+
+  quizDiv.innerHTML += `<p>Your Score: ${score}/${total} – ${passed ? "✅ Passed" : "❌ Failed"}</p>`;
+
+  if (passed && index === currentModule) {
+    currentModule++;
+    renderDashboard();
+  }
+}
+
+async function startFinalQuiz() {
+  const skill = document.getElementById("skill").value;
+  const res = await fetch('/api/final-quiz?skill=' + encodeURIComponent(skill));
+  const data = await res.json();
+
+  if (data.error) {
+    document.getElementById('finalQuizBox').innerHTML = "❌ " + data.error;
+    return;
+  }
+
+  finalQuestions = data.questions;
+  let html = "<form id='finalForm'>";
+  finalQuestions.forEach((q, i) => {
+    html += `<div class="quiz-question"><b>Q${i+1}: ${q.question}</b><br>`;
+    for (const [key, val] of Object.entries(q.options)) {
+      html += `<label><input type="radio" name="fq${i}" value="${key}"> (${key}) ${val}</label><br>`;
+    }
+    html += `</div>`;
+  });
+  html += `<button type="button" onclick="submitFinalQuiz()">Submit Final Quiz</button></form>`;
+  document.getElementById('finalQuizBox').innerHTML = html;
+}
+async function submitFinalQuiz() {
+  let score = 0;
+  finalQuestions.forEach((q, i) => {
+    const selected = document.querySelector(`input[name="fq${i}"]:checked`);
+    if (selected && selected.value === q.correct_answer) score++;
+  });
+
+  const skill = document.getElementById("skill").value;
+  const total = finalQuestions.length;
+
+  const res = await fetch('/api/final-feedback', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ skill, score, total })
+  });
+
+  const data = await res.json();
+  let html = `<h3>Final Score: ${score}/${total}</h3><p><b>🧠 Feedback:</b> ${data.feedback}</p>`;
+
+  if (data.suggested_topics && data.suggested_topics.length > 0) {
+    html += "<h4>🔁 Suggested Topics to Revisit:</h4><ul>";
+    data.suggested_topics.forEach(topic => {
+      html += `<li>${topic}</li>`;
+    });
+    html += "</ul>";
+  }
+
+  document.getElementById("finalResult").innerHTML = html;
+}
+
+async function requestPlanUpdate() {
+  const skill = document.getElementById("skill").value;
+  const reason = document.getElementById("updateReason").value;
+
+  if (!reason.trim()) {
+    alert("Please explain why you want to update the plan.");
+    return;
+  }
+
+  const res = await fetch('/api/request-plan-update', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      skill,
+      reason,
+      current_plan: planData
+    })
+  });
+
+  const data = await res.json();
+  if (data.error) {
+    document.getElementById('updatedPlanBox').innerText = "❌ " + data.error;
+    return;
+  }
+
+  planData = data.updated_plan;
+  currentModule = 0;  // reset progress if desired
+  renderDashboard();
+
+  let html = "<h4>📅 New Updated Plan:</h4><ul>";
+  planData.forEach(d => {
+    html += `<li><b>${d.title || "Day " + d.day}</b>: ${d.topics.join(", ")}<ul>`;
+    html += d.resources.map(r => `<li>${r.title} (${r.estimated_time})</li>`).join("") + "</ul></li>";
+  });
+  html += "</ul>";
+
+  document.getElementById("updatedPlanBox").innerHTML = html;
+}
+
+</script>
+
+</body>
+</html>
