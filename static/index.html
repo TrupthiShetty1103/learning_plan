@@ -1,20 +1,22 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Learning Dashboard</title>
-  <style>
-    body { font-family: Arial; max-width: 900px; margin: auto; background: #f9f9f9; padding: 20px; }
-    h2 { color: #222; }
-    .module { background: #fff; padding: 15px; margin-bottom: 10px; border-radius: 8px; box-shadow: 0 0 5px #ccc; }
-    .locked { opacity: 0.5; pointer-events: none; }
-    button { padding: 8px 12px; border: none; background: #007bff; color: white; border-radius: 5px; cursor: pointer; }
-    button:disabled { background: #999; }
-    .quiz-question { margin: 10px 0; }
-    .correct { color: green; }
-    .wrong { color: red; }
-    ul { margin: 0; padding-left: 20px; }
-  </style>
+<meta charset="UTF-8">
+<title>Learning Dashboard</title>
+<style>
+  body { font-family: Arial, sans-serif; max-width: 900px; margin: auto; background: #f9f9f9; padding: 20px; }
+  h2 { color: #222; }
+  .module { background: #fff; padding: 15px; margin-bottom: 10px; border-radius: 8px; box-shadow: 0 0 5px #ccc; }
+  .locked { opacity: 0.5; pointer-events: none; }
+  button { padding: 8px 12px; border: none; background: #007bff; color: white; border-radius: 5px; cursor: pointer; }
+  button:disabled { background: #999; }
+  .quiz-question { margin: 10px 0; }
+  .correct { color: green; }
+  .wrong { color: red; }
+  ul { margin: 0; padding-left: 20px; }
+  textarea { width: 100%; font-family: monospace; }
+  pre { background: #eee; padding: 5px; border-radius: 4px; }
+</style>
 </head>
 <body>
 
@@ -32,14 +34,14 @@
 <button id="finalBtn" onclick="startFinalQuiz()" style="display:none;">Take Final Quiz</button>
 <div id="finalQuizBox"></div>
 <div id="finalResult"></div>
+
 <h2>🔁 Request Plan Update</h2>
 <p>Not satisfied with the plan? Describe why you'd like a change:</p>
-<textarea id="updateReason" rows="3" cols="60" placeholder="e.g., too fast, need more practice time..."></textarea><br>
+<textarea id="updateReason" rows="3" placeholder="e.g., too fast, need more practice time..."></textarea><br>
 <button onclick="requestPlanUpdate()">Request Updated Plan</button>
 <div id="updatedPlanBox"></div>
 
 <script>
-let userId = "demo-user";
 let planData = [];
 let currentModule = 0;
 let finalQuestions = [];
@@ -52,7 +54,6 @@ async function generatePlan() {
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({ skill, deadline })
   });
-
   const data = await res.json();
   planData = data.plan;
   currentModule = 0;
@@ -70,16 +71,15 @@ function renderDashboard() {
     div.innerHTML = `
       <h3>${mod.title || 'Day ' + (idx+1)}</h3>
       <b>Topics:</b> ${mod.topics.join(", ")}<br>
-      <b>Resources:</b><ul>
-        ${mod.resources.map(r => `<li>${r.title} (${r.estimated_time})</li>`).join("")}
-      </ul>
+      <b>Resources:</b>
+      <ul>${mod.resources.map(r => `<li>${r.title} (${r.estimated_time})</li>`).join("")}</ul>
       <button onclick="startQuiz(${idx})" ${locked ? "disabled" : ""}>Take Quiz</button>
+      <button onclick="startCoding(${idx})" ${locked ? "disabled" : ""}>Do Coding Practice</button>
       <div id="quiz-${idx}"></div>
     `;
     dashboard.appendChild(div);
   });
 
-  // Show Final Quiz button if all modules passed
   if (currentModule >= planData.length) {
     document.getElementById('finalBtn').style.display = 'inline-block';
   }
@@ -89,7 +89,6 @@ async function startQuiz(moduleIndex) {
   const topic = planData[moduleIndex].topics[0];
   const quizDiv = document.getElementById(`quiz-${moduleIndex}`);
   quizDiv.innerHTML = "⏳ Loading quiz...";
-
   const res = await fetch('/api/module-quiz?topic=' + encodeURIComponent(topic));
   const data = await res.json();
 
@@ -98,7 +97,7 @@ async function startQuiz(moduleIndex) {
     return;
   }
 
-  let html = "<form id='form-" + moduleIndex + "'>";
+  let html = "<h4>📝 Quiz Questions</h4><form id='form-" + moduleIndex + "'>";
   data.questions.forEach((q, i) => {
     html += `<div class="quiz-question"><b>Q${i+1}: ${q.question}</b><br>`;
     for (const [key, val] of Object.entries(q.options)) {
@@ -117,15 +116,62 @@ function submitQuiz(index, questions) {
     if (selected && selected.value === q.correct_answer) score++;
   });
 
-  const quizDiv = document.getElementById(`quiz-${index}`);
   const total = questions.length;
   const passed = score >= Math.ceil(0.7 * total);
-
+  const quizDiv = document.getElementById(`quiz-${index}`);
   quizDiv.innerHTML += `<p>Your Score: ${score}/${total} – ${passed ? "✅ Passed" : "❌ Failed"}</p>`;
 
   if (passed && index === currentModule) {
     currentModule++;
     renderDashboard();
+  }
+}
+
+async function startCoding(moduleIndex) {
+  const topic = planData[moduleIndex].topics[0];
+  const res = await fetch('/api/module-coding?topic=' + encodeURIComponent(topic));
+  const data = await res.json();
+  const quizDiv = document.getElementById(`quiz-${moduleIndex}`);
+
+  if (data.error) {
+    quizDiv.innerHTML += "<p>❌ Failed to load coding questions: " + data.error + "</p>";
+    return;
+  }
+
+  let html = "<h4>💻 Coding Questions</h4>";
+  data.coding_questions.forEach((q, idx) => {
+    html += `
+    <div class="quiz-question">
+      <b>Q${idx+1}: ${q.question}</b><br>
+      <b>Sample Input:</b> <pre>${q.sample_input}</pre>
+      <b>Expected Output:</b> <pre>${q.sample_output}</pre>
+      <textarea id="code-${moduleIndex}-${idx}" rows="6" placeholder="Write your code here"></textarea><br>
+      <button onclick="runCode(${moduleIndex}, ${idx}, \`${q.sample_input.replace(/`/g, '\\`')}\`, \`${q.sample_output.replace(/`/g, '\\`')}\`)">Run & Submit</button>
+      <div id="output-${moduleIndex}-${idx}"></div>
+    </div>`;
+  });
+  quizDiv.innerHTML += html;
+}
+
+async function runCode(moduleIndex, questionIndex, sampleInput, expectedOutput) {
+  const code = document.getElementById(`code-${moduleIndex}-${questionIndex}`).value;
+  const res = await fetch('/api/execute-code', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ code, test_input: sampleInput })
+  });
+  const data = await res.json();
+  const outputDiv = document.getElementById(`output-${moduleIndex}-${questionIndex}`);
+
+  if (data.error) {
+    outputDiv.innerHTML = `<p class="wrong">❌ Error: ${data.error}</p>`;
+    return;
+  }
+
+  if (data.output === expectedOutput.trim()) {
+    outputDiv.innerHTML = `<p class="correct">✅ Correct Output: ${data.output}</p>`;
+  } else {
+    outputDiv.innerHTML = `<p class="wrong">❌ Wrong Output: ${data.output} <br>Expected: ${expectedOutput}</p>`;
   }
 }
 
@@ -151,6 +197,7 @@ async function startFinalQuiz() {
   html += `<button type="button" onclick="submitFinalQuiz()">Submit Final Quiz</button></form>`;
   document.getElementById('finalQuizBox').innerHTML = html;
 }
+
 async function submitFinalQuiz() {
   let score = 0;
   finalQuestions.forEach((q, i) => {
@@ -160,31 +207,25 @@ async function submitFinalQuiz() {
 
   const skill = document.getElementById("skill").value;
   const total = finalQuestions.length;
-
   const res = await fetch('/api/final-feedback', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({ skill, score, total })
   });
-
   const data = await res.json();
-  let html = `<h3>Final Score: ${score}/${total}</h3><p><b>🧠 Feedback:</b> ${data.feedback}</p>`;
 
+  let html = `<h3>Final Score: ${score}/${total}</h3><p><b>🧠 Feedback:</b> ${data.feedback}</p>`;
   if (data.suggested_topics && data.suggested_topics.length > 0) {
     html += "<h4>🔁 Suggested Topics to Revisit:</h4><ul>";
-    data.suggested_topics.forEach(topic => {
-      html += `<li>${topic}</li>`;
-    });
+    data.suggested_topics.forEach(topic => html += `<li>${topic}</li>`);
     html += "</ul>";
   }
-
   document.getElementById("finalResult").innerHTML = html;
 }
 
 async function requestPlanUpdate() {
   const skill = document.getElementById("skill").value;
   const reason = document.getElementById("updateReason").value;
-
   if (!reason.trim()) {
     alert("Please explain why you want to update the plan.");
     return;
@@ -193,21 +234,17 @@ async function requestPlanUpdate() {
   const res = await fetch('/api/request-plan-update', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({
-      skill,
-      reason,
-      current_plan: planData
-    })
+    body: JSON.stringify({ skill, reason, current_plan: planData })
   });
-
   const data = await res.json();
+
   if (data.error) {
     document.getElementById('updatedPlanBox').innerText = "❌ " + data.error;
     return;
   }
 
   planData = data.updated_plan;
-  currentModule = 0;  // reset progress if desired
+  currentModule = 0;
   renderDashboard();
 
   let html = "<h4>📅 New Updated Plan:</h4><ul>";
@@ -216,10 +253,8 @@ async function requestPlanUpdate() {
     html += d.resources.map(r => `<li>${r.title} (${r.estimated_time})</li>`).join("") + "</ul></li>";
   });
   html += "</ul>";
-
   document.getElementById("updatedPlanBox").innerHTML = html;
 }
-
 </script>
 
 </body>
